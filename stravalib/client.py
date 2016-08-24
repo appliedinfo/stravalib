@@ -159,7 +159,7 @@ class Client(object):
 
         return calendar.timegm(activity_datetime.timetuple())
 
-    def get_activities(self, before=None, after=None, limit=None):
+    def get_activities(self, before=None, after=None, limit=None, resource_state=3):
         """
         Get activities for authenticated user sorted by newest first.
 
@@ -187,7 +187,7 @@ class Client(object):
         if after:
             after = self._utc_datetime_to_epoch(after)
 
-        params = dict(before=before, after=after)
+        params = dict(before=before, after=after, resource_state=resource_state)
         result_fetcher = functools.partial(self.protocol.get,
                                            '/athlete/activities',
                                            **params)

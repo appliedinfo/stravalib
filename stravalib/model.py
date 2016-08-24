@@ -32,6 +32,7 @@ class BaseEntity(object):
 
         Only defined attributes will be set; warnings will be logged for invalid attributes.
         """
+        self.raw = d
         for (k, v) in d.items():
             # Only set defined attributes.
             if hasattr(self.__class__, k):
