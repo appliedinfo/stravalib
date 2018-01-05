@@ -1,7 +1,9 @@
 """
 Provides the main interface classes for the Strava version 3 REST API.
 """
+from __future__ import division, absolute_import, print_function, unicode_literals
 import logging
+import warnings
 import functools
 import time
 import collections
@@ -9,10 +11,9 @@ import calendar
 from io import BytesIO
 from datetime import datetime, timedelta
 
+import arrow
 import pytz
-
-from dateutil.parser import parser
-dateparser = parser()
+import six
 
 from units.quantity import Quantity
 
@@ -20,11 +21,6 @@ from stravalib import model, exc
 from stravalib.protocol import ApiV3
 from stravalib.util import limiter
 from stravalib import unithelper
-
-try:
-    unicode
-except:
-    unicode = str
 
 
 class Client(object):
@@ -132,7 +128,7 @@ class Client(object):
         return self.protocol.exchange_code_for_token(client_id=client_id,
                                                      client_secret=client_secret,
                                                      code=code)
-                                                     
+
     def deauthorize(self):
         """
         Deauthorize the application. This causes the application to be removed
@@ -152,7 +148,7 @@ class Client(object):
         :rtype: int
         """
         if isinstance(activity_datetime, str):
-            activity_datetime = dateparser.parse(activity_datetime)
+            activity_datetime = arrow.get(activity_datetime).datetime
         assert isinstance(activity_datetime, datetime)
         if activity_datetime.tzinfo:
             activity_datetime = activity_datetime.astimezone(pytz.utc)
@@ -266,7 +262,7 @@ class Client(object):
                   'state': state,
                   'country': country,
                   'sex': sex}
-        params = {k: v for (k, v) in params.iteritems() if v is not None}
+        params = {k: v for (k, v) in params.items() if v is not None}
         if weight is not None:
             params['weight'] = float(weight)
 
@@ -556,7 +552,7 @@ class Client(object):
 
     def update_activity(self, activity_id, name=None, activity_type=None,
                         private=None, commute=None, trainer=None, gear_id=None,
-                        description=None):
+                        description=None,device_name=None):
         """
         Updates the properties of a specific activity.
 
@@ -576,29 +572,43 @@ class Client(object):
         :param trainer: Whether this is a trainer activity.
         :param gear_id: Alpha-numeric ID of gear (bike, shoes) used on this activity.
         :param description: Description for the activity.
+        :param device_name: Device name for the activity
 
         :return: The updated activity.
         :rtype: :class:`stravalib.model.Activity`
         """
 
         # Convert the kwargs into a params dict
-        params = dict(activity_id=activity_id)
+        params = {}
+
         if name is not None:
             params['name'] = name
+
         if activity_type is not None:
             if not activity_type.lower() in [t.lower() for t in model.Activity.TYPES]:
                 raise ValueError("Invalid activity type: {0}.  Possible values: {1!r}".format(activity_type, model.Activity.TYPES))
             params['type'] = activity_type
+
         if private is not None:
             params['private'] = int(private)
+
         if commute is not None:
             params['commute'] = int(commute)
+
         if trainer is not None:
             params['trainer'] = int(trainer)
+
         if gear_id is not None:
             params['gear_id'] = gear_id
 
-        raw_activity = self.protocol.put('/activities/{activity_id}', **params)
+        if description is not None:
+            params['description'] = description
+            
+        if device_name is not None:
+            params['device_name'] = device_name
+
+        raw_activity = self.protocol.put('/activities/{activity_id}', activity_id=activity_id, **params)
+
         return model.Activity.deserialize(raw_activity, bind_client=self)
 
     def upload_activity(self, activity_file, data_type, name=None, description=None,
@@ -634,12 +644,12 @@ class Client(object):
         :type external_id: str
         """
         if not hasattr(activity_file, 'read'):
-            if isinstance(activity_file, unicode):
+            if isinstance(activity_file, six.string_types):
                 activity_file = BytesIO(activity_file.encode('utf-8'))
             elif isinstance(activity_file, str):
                 activity_file = BytesIO(activity_file)
             else:
-                raise TypeError("Invalid type specified for activity_file: {0}".format(type(file)))
+                raise TypeError("Invalid type specified for activity_file: {0}".format(type(activity_file)))
 
         valid_data_types = ('fit', 'fit.gz', 'tcx', 'tcx.gz', 'gpx', 'gpx.gz')
         if not data_type in valid_data_types:
@@ -665,6 +675,17 @@ class Client(object):
                                               **params)
 
         return ActivityUploader(self, response=initial_response)
+
+    def delete_activity(self, activity_id):
+        """
+        Deletes the specified activity.
+
+        https://strava.github.io/api/v3/activities/#delete
+
+        :param activity_id: The activity to delete.
+        :type activity_id: int
+        """
+        self.protocol.delete('/activities/{id}', id=activity_id)
 
     def get_activity_zones(self, activity_id):
         """
@@ -734,7 +755,7 @@ class Client(object):
                                       result_fetcher=result_fetcher,
                                       limit=limit)
 
-    def get_activity_photos(self, activity_id):
+    def get_activity_photos(self, activity_id, size=None, only_instagram=False):
         """
         Gets the photos from an activity.
 
@@ -743,12 +764,27 @@ class Client(object):
         :param activity_id: The activity for which to fetch kudos.
         :type activity_id: int
 
+        :param size: the requested size of the activity's photos. URLs for the photos will be returned that best match
+                    the requested size. If not included, the smallest size is returned
+        :type size: int
+
+        :param only_instagram: Parameter to preserve legacy behavior of only returning Instagram photos.
+        :type only_instagram: bool
+
         :return: An iterator of :class:`stravalib.model.ActivityPhoto` objects.
         :rtype: :class:`BatchedResultsIterator`
         """
+        params = {}
+
+        if not only_instagram:
+            params['photo_sources'] = 'true'
+
+        if size is not None:
+            params['size'] = size
+
         result_fetcher = functools.partial(self.protocol.get,
                                            '/activities/{id}/photos',
-                                           id=activity_id)
+                                           id=activity_id, **params)
 
         return BatchedResultsIterator(entity=model.ActivityPhoto,
                                       bind_client=self,
@@ -839,7 +875,7 @@ class Client(object):
         return model.Segment.deserialize(self.protocol.get('/segments/{id}',
                                          id=segment_id), bind_client=self)
 
-    def get_starred_segment(self, limit=None):
+    def get_starred_segments(self, limit=None):
         """
         Returns a summary representation of the segments starred by the
          authenticated user. Pagination is supported.
@@ -865,9 +901,34 @@ class Client(object):
                                       result_fetcher=result_fetcher,
                                       limit=limit)
 
+    def get_athlete_starred_segments(self, athlete_id, limit=None):
+        """
+        Returns a summary representation of the segments starred by the
+         specified athlete. Pagination is supported.
+
+        http://strava.github.io/api/v3/segments/#starred
+
+        :param athlete_id: The ID of the athlete.
+        :type athlete_id: int
+
+        :param limit: (optional), limit number of starred segments returned.
+        :type limit: int
+
+        :return: An iterator of :class:`stravalib.model.Segment` starred by authenticated user.
+        :rtype: :class:`BatchedResultsIterator`
+        """
+        result_fetcher = functools.partial(self.protocol.get,
+                                           '/athletes/{id}/segments/starred',
+                                           id=athlete_id)
+
+        return BatchedResultsIterator(entity=model.Segment,
+                                      bind_client=self,
+                                      result_fetcher=result_fetcher,
+                                      limit=limit)
+
     def get_segment_leaderboard(self, segment_id, gender=None, age_group=None, weight_class=None,
                                 following=None, club_id=None, timeframe=None, top_results_limit=None,
-                                page=None):
+                                page=None, context_entries = None):
         """
         Gets the leaderboard for a segment.
 
@@ -907,6 +968,9 @@ class Client(object):
 
         :param page: (optional, strava default is 1) Page number of leaderboard to return, sorted by highest ranking leaders
         :type page: int
+
+        :param context_entries: (optional, strava default is 2, max is 15) number of entries surrounding requesting athlete to return
+        :type context_entries: int
 
         :return: The SegmentLeaderboard for the specified page (default: 1)
         :rtype: :class:`stravalib.model.SegmentLeaderboard`
@@ -948,6 +1012,9 @@ class Client(object):
 
         if page is not None:
             params['page'] = page
+
+        if context_entries is not None:
+            params['context_entries'] = context_entries
 
         return model.SegmentLeaderboard.deserialize(self.protocol.get('/segments/{id}/leaderboard',
                                                                       id=segment_id,
@@ -991,8 +1058,8 @@ class Client(object):
                                            Either as ISO8601 or datetime object
         :type end_date_local: datetime.datetime or str
 
-        :param top_results_limit: (optional), limit number of efforts.
-        :type results_limit: int
+        :param limit: (optional), limit number of efforts.
+        :type limit: int
 
         :return: An iterator of :class:`stravalib.model.SegmentEffort` efforts on a segment.
         :rtype: :class:`BatchedResultsIterator`
@@ -1004,20 +1071,20 @@ class Client(object):
             params['athlete_id'] = athlete_id
 
         if start_date_local:
-            if isinstance(start_date_local, (str, unicode)):
-                start_date_local = dateparser.parse(start_date_local, ignoretz=True)
+            if isinstance(start_date_local, six.string_types):
+                start_date_local = arrow.get(start_date_local).naive
             params["start_date_local"] = start_date_local.strftime("%Y-%m-%dT%H:%M:%SZ")
 
         if end_date_local:
-            if isinstance(end_date_local, (str, unicode)):
-                end_date_local = dateparser.parse(end_date_local, ignoretz=True)
+            if isinstance(end_date_local, six.string_types):
+                end_date_local = arrow.get(end_date_local).naive
             params["end_date_local"] = end_date_local.strftime("%Y-%m-%dT%H:%M:%SZ")
 
         if limit is not None:
             params["limit"] = limit
 
         result_fetcher = functools.partial(self.protocol.get,
-                                           '/segments/{}/all_efforts'.format(segment_id),
+                                           '/segments/{segment_id}/all_efforts',
                                            **params)
 
         return BatchedResultsIterator(entity=model.BaseEffort, bind_client=self,
@@ -1046,7 +1113,7 @@ class Client(object):
 
         """
         if len(bounds) == 2:
-            bounds = (bounds[0][0], bounds[0][1], bounds[1][0], bounds[1][2])
+            bounds = (bounds[0][0], bounds[0][1], bounds[1][0], bounds[1][1])
         elif len(bounds) != 4:
             raise ValueError("Invalid bounds specified: {0!r}. Must be list of 4 float values or list of 2 (lat,lon) tuples.")
 
@@ -1258,6 +1325,184 @@ class Client(object):
         # Pack streams into dictionary
         return {i.type: i for i in streams}
 
+    def get_routes(self, athlete_id=None, limit=None):
+        """
+        Gets the routes list for an authenticated user.
+
+        http://strava.github.io/api/v3/routes/#list
+
+        :param athlete_id: id for the
+
+        :param limit: Max rows to return (default unlimited).
+        :type limit: int
+
+        :return: An iterator of :class:`stravalib.model.Route` objects.
+        :rtype: :class:`BatchedResultsIterator`
+        """
+        if athlete_id is None:
+            athlete_id = self.get_athlete().id
+
+        result_fetcher = functools.partial(self.protocol.get,
+                                           '/athletes/{id}/routes'.format(id=athlete_id))
+
+        return BatchedResultsIterator(entity=model.Route,
+                                      bind_client=self,
+                                      result_fetcher=result_fetcher,
+                                      limit=limit)
+
+    def get_route(self, route_id):
+        """
+        Gets specified route.
+
+        Will be detail-level if owned by authenticated user; otherwise summary-level.
+
+        https://strava.github.io/api/v3/routes/#retreive
+
+        :param route_id: The ID of route to fetch.
+        :type route_id: int
+
+        :rtype: :class:`stravalib.model.Route`
+        """
+        raw = self.protocol.get('/routes/{id}', id=route_id)
+        return model.Route.deserialize(raw, bind_client=self)
+
+    def get_route_streams(self, route_id):
+        """
+        Returns streams for a route.
+
+        http://strava.github.io/api/v3/streams/#routes
+
+        Streams represent the raw data of the saved route. External
+        applications may access this information for all public routes and for
+        the private routes of the authenticated athlete.
+
+        The 3 available route stream types `distance`, `altitude` and `latlng`
+        are always returned.
+
+        http://strava.github.io/api/v3/streams/#routes
+
+        :param activity_id: The ID of activity.
+        :type activity_id: int
+
+        :return: A dictionary of :class:`stravalib.model.Stream`from the route.
+        :rtype: :py:class:`dict`
+
+        """
+
+        result_fetcher = functools.partial(self.protocol.get,
+                                           '/routes/{id}/streams/'.format(id=route_id))
+
+        streams = BatchedResultsIterator(entity=model.Stream,
+                                         bind_client=self,
+                                         result_fetcher=result_fetcher)
+
+        # Pack streams into dictionary
+        return {i.type: i for i in streams}
+
+    def create_subscription(self, client_id, client_secret, callback_url,
+                            object_type=model.Subscription.OBJECT_TYPE_ACTIVITY,
+                            aspect_type=model.Subscription.ASPECT_TYPE_CREATE,
+                            verify_token=model.Subscription.VERIFY_TOKEN_DEFAULT):
+        """
+        Creates a webhook event subscription.
+
+        http://strava.github.io/api/partner/v3/events/#create-a-subscription
+
+        :param client_id: application's ID, obtained during registration
+        :type client_id: int
+
+        :param client_secret: application's secret, obtained during registration
+        :type client_secret: str
+
+        :param callback_url: callback URL where Strava will first send a GET request to validate, then subsequently send POST requests with updates
+        :type callback_url: str
+
+        :param object_type: object_type (currently only `activity` is supported)
+        :type object_type: str
+
+        :param aspect_type: object_type (currently only `create` is supported)
+        :type aspect_type: str
+
+        :param verify_token: a token you can use to verify Strava's GET callback request
+        :type verify_token: str
+
+        :return: An instance of :class:`stravalib.model.Subscription`.
+        :rtype: :class:`stravalib.model.Subscription`
+
+        Notes:
+
+        `object_type` and `aspect_type` are given defaults because there is currently only one valid value for each.
+
+        `verify_token` is set to a default in the event that the author doesn't want to specify one.
+
+        The appliction must have permission to make use of the webhook API. Access can be requested by contacting developers -at- strava.com.
+        """
+        params = dict(client_id=client_id, client_secret=client_secret,
+                      object_type=object_type, aspect_type=aspect_type,
+                      callback_url=callback_url, verify_token=verify_token)
+        raw = self.protocol.post('/push_subscriptions', use_webhook_server=True,
+                                 **params)
+        return model.Subscription.deserialize(raw, bind_client=self)
+
+    def handle_subscription_callback(self, raw,
+                                     verify_token=model.Subscription.VERIFY_TOKEN_DEFAULT):
+        """
+        Validate callback request and return valid response with challenge
+        """
+        callback = model.SubscriptionCallback.deserialize(raw)
+        callback.validate(verify_token)
+        response_raw = {'hub.challenge': callback.hub_challenge}
+        return response_raw
+
+    def handle_subscription_update(self, raw):
+        """
+        Converts a raw subscription update into a model.
+
+        TODO: Have the response actually return a reference to the underlying model (the activity itself)
+        """
+        return model.SubscriptionUpdate.deserialize(raw, bind_client=self)
+
+    def list_subscriptions(self, client_id, client_secret):
+        """
+        List current webhook event subscriptions in place for the current application.
+
+        http://strava.github.io/api/partner/v3/events/#list-push-subscriptions
+
+        :param client_id: application's ID, obtained during registration
+        :type client_id: int
+
+        :param client_secret: application's secret, obtained during registration
+        :type client_secret: str
+
+        :return: An iterator of :class:`stravalib.model.Subscription` objects.
+        :rtype: :class:`BatchedResultsIterator`
+        """
+        result_fetcher = functools.partial(self.protocol.get, '/push_subscriptions', client_id=client_id,
+                                           client_secret=client_secret, use_webhook_server=True)
+
+        return BatchedResultsIterator(entity=model.Subscription,
+                                      bind_client=self,
+                                      result_fetcher=result_fetcher)
+
+    def delete_subscription(self, subscription_id, client_id, client_secret):
+        """
+        Unsubscribe from webhook events for an existing subscription.
+
+        http://strava.github.io/api/partner/v3/events/#delete-a-subscription
+
+        :param subscription_id: ID of subscription to remove.
+        :type subscription_id: int
+
+        :param client_id: application's ID, obtained during registration
+        :type client_id: int
+
+        :param client_secret: application's secret, obtained during registration
+        :type client_secret: str
+        """
+        self.protocol.delete('/push_subscriptions/{id}', id=subscription_id,
+                             client_id=client_id, client_secret=client_secret, use_webhook_server=True)
+        # Expects a 204 response if all goes well.
+
 
 class BatchedResultsIterator(object):
     """
@@ -1284,9 +1529,8 @@ class BatchedResultsIterator(object):
         :type limit: int
 
         :param per_page: How many rows to fetch per page (default is 200).
-        :rtype: :py:class:`int`
+        :type per_page: int
         """
-
         self.log = logging.getLogger('{0.__module__}.{0.__name__}'.format(self.__class__))
         self.entity = entity
         self.bind_client = bind_client
@@ -1295,8 +1539,6 @@ class BatchedResultsIterator(object):
 
         if per_page is not None:
             self.per_page = per_page
-        #elif limit is not None:
-        #    self.per_page = limit
         else:
             self.per_page = self.default_per_page
 
@@ -1341,6 +1583,9 @@ class BatchedResultsIterator(object):
         self.reset()
         raise StopIteration
 
+    def __next__(self):
+        return self.next()
+
     def next(self):
         if self.limit and self._counter >= self.limit:
             self._eof()
@@ -1361,17 +1606,21 @@ class ActivityUploader(object):
     wait for upload to finish, etc.
     """
 
-    def __init__(self, client, response):
+    def __init__(self, client, response, raise_exc=True):
         """
         :param client: The :class:`stravalib.client.Client` object that is handling the upload.
         :type client: :class:`stravalib.client.Client`
 
         :param response: The initial upload response.
-        :type response: :py:class:`dict`
+        :type response: Dict[str,Any]
 
+        :param raise_exc: Whether to raise an exception if the response
+                  indicates an error state. (default True)
+        :type raise_exc: bool
         """
         self.client = client
-        self.update_from_response(response)
+        self.response = response
+        self.update_from_response(response, raise_exc=raise_exc)
 
     def update_from_response(self, response, raise_exc=True):
         """
@@ -1387,8 +1636,14 @@ class ActivityUploader(object):
         self.upload_id = response.get('id')
         self.external_id = response.get('external_id')
         self.activity_id = response.get('activity_id')
-        self.status = response.get('status')
-        self.error = response.get('error')
+        self.status = response.get('status') or response.get('message')
+
+        if response.get('error'):
+            self.error = response.get('error')
+        elif response.get('errors'):
+            # This appears to be an undocumented API; ths is a bit of a hack for now.
+            self.error = str(response.get('errors'))
+
         if raise_exc:
             self.raise_for_error()
 
@@ -1405,6 +1660,7 @@ class ActivityUploader(object):
         return (self.activity_id is not None)
 
     def raise_for_error(self):
+        # FIXME: We need better handling of the actual responses, once those are more accurately documented.
         if self.error:
             raise exc.ActivityUploadFailed(self.error)
         elif self.status == "The created activity has been deleted.":

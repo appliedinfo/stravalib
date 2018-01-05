@@ -4,15 +4,22 @@ Attribute types used for the model.
 The types system provides a mechanism for serializing/un the data to/from JSON
 structures and for capturing additional information about the model attributes.
 """
+from __future__ import division, absolute_import, print_function, unicode_literals
 import logging
 from datetime import datetime, timedelta, tzinfo, date
 from collections import namedtuple
 from weakref import WeakKeyDictionary, WeakValueDictionary
 
+import arrow
 import pytz
 from units.quantity import Quantity
+import six
 
 import stravalib.model
+
+# Depending on the type of request, objects will be returned in meta,  summary or detailed representations. The
+# representation of the returned object is indicated by the resource_state attribute.
+# (For more info, see https://strava.github.io/api/)
 
 META = 1
 SUMMARY = 2
@@ -66,7 +73,10 @@ class Attribute(object):
         (By default this will just return the underlying object; subclasses
         can override for specific behaviors -- e.g. date formatting.)
         """
-        return v
+        if isinstance(v, Quantity):
+            return v.num
+        else:
+            return v
 
     def unmarshal(self, v):
         """
@@ -91,6 +101,15 @@ class DateAttribute(Attribute):
     def __init__(self, resource_states=None):
         super(DateAttribute, self).__init__(date, resource_states=resource_states)
 
+    def marshal(self, v):
+        """
+
+        :param v: The date object to convert.
+        :type v: date
+        :return:
+        """
+        return v.isoformat() if v else None
+
     def unmarshal(self, v):
         """
         Convert a date in "2012-12-13" format to a :class:`datetime.date` object.
@@ -108,13 +127,33 @@ class TimestampAttribute(Attribute):
         super(TimestampAttribute, self).__init__(datetime, resource_states=resource_states)
         self.tzinfo = tzinfo
 
+    def marshal(self, v):
+        """
+        Serialize the timestamp to string.
+
+        :param v: The timestamp.
+        :type v: datetime
+        :return: The serialized date time.
+        """
+        return v.isoformat() if v else None
+
     def unmarshal(self, v):
         """
         Convert a timestamp in "2012-12-13T03:43:19Z" format to a `datetime.datetime` object.
         """
         if not isinstance(v, datetime):
-            # 2012-12-13T03:43:19Z
-            v = datetime.strptime(v, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=self.tzinfo)
+            if isinstance(v, six.integer_types):
+                v = arrow.get(v)
+            else:
+                try:
+                    # Most dates are in this format 2012-12-13T03:43:19Z
+                    v = datetime.strptime(v, "%Y-%m-%dT%H:%M:%SZ")
+                except ValueError:
+                    # ... but not all.
+                    v = arrow.get(v).datetime
+            # Translate to specified TZ
+            v = v.replace(tzinfo=self.tzinfo)
+
         return v
 
 
@@ -126,6 +165,17 @@ class LocationAttribute(Attribute):
     """
     def __init__(self, resource_states=None):
         super(LocationAttribute, self).__init__(LatLon, resource_states=resource_states)
+
+    def marshal(self, v):
+        """
+        Turn this value into format for wire (JSON).
+
+        :param v: The lat/lon.
+        :type v: LatLon
+        :return: Serialized format.
+        :rtype: str
+        """
+        return "{lat},{lon}".format(lat=v.lat, lon=v.lon) if v else None
 
     def unmarshal(self, v):
         """
@@ -152,6 +202,16 @@ class TimezoneAttribute(Attribute):
             v = pytz.timezone(tzname)
         return v
 
+    def marshal(self, v):
+        """
+        Serialize time zone name.
+
+        :param v: The timezone.
+        :type v: tzdata
+        :return: The name of the time zone.
+        """
+        return str(v) if v else None
+
 
 class TimeIntervalAttribute(Attribute):
     """
@@ -171,6 +231,16 @@ class TimeIntervalAttribute(Attribute):
         if not isinstance(v, timedelta):
             v = timedelta(seconds=v)
         return v
+
+    def marshal(self, v):
+        """
+        Serialize time zone name.
+
+        :param v: The timezone.
+        :type v: tzdata
+        :return: The name of the time zone.
+        """
+        return str(v) if v else None
 
 
 class ChoicesAttribute(Attribute):
@@ -192,15 +262,16 @@ class ChoicesAttribute(Attribute):
         as marshal is not used anywhere currently. In the future we will want to
         fail gracefully.
         """
-        orig = [i for i in self.choices if self.choices[i] == v]
-        if len(orig) == 1:
-            return orig[0]
-        elif len(orig) == 0:
-            # No such choice
-            raise NotImplementedError("No such reverse choice {0} for field {1}.".format(v, self))
-        else:
-            # Too many choices. We could return one possible choice (e.g. orig[0]).
-            raise NotImplementedError("Too many reverse choices {0} for value {1} for field {2}".format(orig, v, self))
+        if v:
+            orig = [i for i in self.choices if self.choices[i] == v]
+            if len(orig) == 1:
+                return orig[0]
+            elif len(orig) == 0:
+                # No such choice
+                raise NotImplementedError("No such reverse choice {0} for field {1}.".format(v, self))
+            else:
+                # Too many choices. We could return one possible choice (e.g. orig[0]).
+                raise NotImplementedError("Too many reverse choices {0} for value {1} for field {2}".format(orig, v, self))
 
     def unmarshal(self, v):
         """
@@ -238,7 +309,7 @@ class EntityAttribute(Attribute):
 
     @type.setter
     def type(self, v):
-        if isinstance(v, (str, bytes)):
+        if isinstance(v, (six.text_type, six.binary_type)):
             # Supporting lazy class referencing
             self._lazytype = v
         else:
@@ -251,6 +322,17 @@ class EntityAttribute(Attribute):
             self.data[obj] = self.unmarshal(val, bind_client=getattr(obj, 'bind_client', None))
         else:
             self.data[obj] = None
+
+    def marshal(self, v):
+        """
+        Turn an entity into a dictionary.
+
+        :param v: The entity to serialize.
+        :type v: stravalib.model.BaseEntity
+        :return: Dictionary of attributes
+        :rtype: Dict[str, Any]
+        """
+        return v.to_dict() if v else None
 
     def unmarshal(self, value, bind_client=None):
         """
@@ -277,14 +359,21 @@ class EntityAttribute(Attribute):
 
 class EntityCollection(EntityAttribute):
 
+    def marshal(self, values):
+        """
+        Turn a list of entities into a list of dictionaries.
+
+        :param values: The entities to serialize.
+        :type values: List[stravalib.model.BaseEntity]
+        :return: List of dictionaries of attributes
+        :rtype: List[Dict[str, Any]]
+        """
+        if values is not None:
+            return [super(EntityCollection, self).marshal(v) for v in values]
+
     def unmarshal(self, values, bind_client=None):
         """
         Cast the list.
         """
-        results = []
-        for v in values:
-            #print "-------- Processing value: %r" % (v,)
-            entity = super(EntityCollection, self).unmarshal(v, bind_client=bind_client)
-            #print "-------- Got entity: %r" % (entity,)
-            results.append(entity)
-        return results
+        if values is not None:
+            return [super(EntityCollection, self).unmarshal(v, bind_client=bind_client) for v in values]

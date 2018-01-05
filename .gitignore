@@ -1,4 +1,4 @@
-env/
+env*/
 build/
 dist/
 *.pyc
@@ -7,3 +7,4 @@ dist/
 *.egg/
 docs/_build/
 test.ini
+*~

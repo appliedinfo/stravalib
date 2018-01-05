@@ -3,6 +3,56 @@ Changes
 
 .. contents::
 
+0.7.0
+-----
+* Updated Activity for new attributes (#115, #122)
+* New segment attributes (JohnnyLChang ) (#106)
+* Streams for a route (drixselecta) (#101)
+* Activity Uploader improvements (bwalks) (#119)
+* Added to_dict() method to model objects (#127)
+* Added get_athlete_starred_segments (wjazdbitu) (#117)
+* Fixed glitches in activity.laps (#112)
+* Fixed bug in club.members (#110)
+
+0.6.6
+-----
+* Fix for delete_activity (jonderwaater) (#99)
+
+0.6.5
+-----
+* Updated ActivityPhoto model to support native photos and reverted get_activity_photos behavior for backwards
+  compatibility (#98)
+* Added missing Club attributes (MMI) (#97)
+
+0.6.4
+-----
+* Added support for undocumented inclusion of laps in activity details. (#96)
+* Added missing parameter for get_activity_photos (#94)
+* Added missing activyt pr_count attribute (Wilm0r) (#95)
+* add "starred" property on SegmentExplorerResult (mdarmetko) (#92)
+
+0.6.3
+-----
+* Fixed update_activity to include description (#91)
+
+0.6.2
+-----
+* More Python3 bugfixes
+
+0.6.1
+-----
+* Python3 bugfixes (Tafkas, martinogden)
+* Added delete_activity
+* added context_entries parameter to get_segment_leaderboard method (jedman)
+
+0.6.0
+-----
+* Use (reuqire) more modern pip/setuptools.
+* Full Python 3 support (using Six). (#69)
+* Webhooks support (thanks to loisaidasam) (#77)
+* explore_segments bugfix (#71)
+* General updates to model/attribs (#64, #73, etc.)
+
 0.5.0
 -----
 * Renamed `Activity.photos` property to `full_photos` due to new conflict with Strava API (#45)

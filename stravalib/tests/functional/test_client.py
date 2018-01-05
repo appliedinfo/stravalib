@@ -1,4 +1,4 @@
-from __future__ import absolute_import, unicode_literals
+from __future__ import division, absolute_import, print_function, unicode_literals
 
 from stravalib import model, attributes, exc, unithelper as uh
 from stravalib.client import Client
@@ -50,6 +50,12 @@ class ClientTest(FunctionalTestBase):
         activity_no_segments = self.client.get_activity(self.activity_id)
         self.assertTrue(activity.segment_efforts, None)
 
+    def test_get_route(self):
+        route = self.client.get_route(3445913)
+
+        self.assertEquals('Baveno - Mottarone', route.name)
+        self.assertAlmostEquals(1265.20, float(uh.meters(route.elevation_gain)), 2)
+
     def test_get_activity_laps(self):
         activity = self.client.get_activity(165094211)
         laps = list(self.client.get_activity_laps(165094211))
@@ -64,7 +70,7 @@ class ClientTest(FunctionalTestBase):
         Test loading zones for activity.
         """
         zones = self.client.get_activity_zones(99895560)
-        print zones
+        print(zones)
         self.assertEquals(1, len(zones))
         self.assertIsInstance(zones[0], model.PaceActivityZone)
 
@@ -87,7 +93,7 @@ class ClientTest(FunctionalTestBase):
         """
         Test photos on activity
         """
-        activity = self.client.get_activity(152668627)
+        activity = self.client.get_activity(643026323)
         self.assertTrue(activity.total_photo_count > 0)
         photos = list(activity.full_photos)
         self.assertEqual(len(photos), 1)
@@ -128,6 +134,18 @@ class ClientTest(FunctionalTestBase):
         # latlng stream
         self.assertIsInstance(streams['latlng'].data, list)
         self.assertIsInstance(streams['latlng'].data[0][0], float)
+
+    def test_route_streams(self):
+        """
+        Test toute streams
+        """
+        stypes = ['latlng', 'distance', 'altitude']
+
+        streams = self.client.get_route_streams(3445913)
+        self.assertEqual(len(streams.keys()), 3)
+
+        for t in stypes:
+            self.assertIn(t, streams.keys())
 
     def test_related_activities(self):
         """
@@ -200,7 +218,7 @@ class ClientTest(FunctionalTestBase):
         print(lb.effort_count)
         print(lb.entry_count)
         for i,e in enumerate(lb):
-            print '{0}: {1}'.format(i, e)
+            print('{0}: {1}'.format(i, e))
 
         self.assertEquals(10, len(lb.entries)) # 10 top results
         self.assertIsInstance(lb.entries[0], model.SegmentLeaderboardEntry)
@@ -213,7 +231,7 @@ class ClientTest(FunctionalTestBase):
         self.assertEquals(lb[0].athlete_name, "{0} {1}".format(athlete.firstname, athlete.lastname))
 
         effort = lb[0].effort
-        print effort
+        print(effort)
         self.assertIsInstance(effort, model.SegmentEffort)
         self.assertEquals('Hawk Hill', effort.name)
 
@@ -224,7 +242,7 @@ class ClientTest(FunctionalTestBase):
     def test_get_segment(self):
         segment = self.client.get_segment(229781)
         self.assertIsInstance(segment, model.Segment)
-        print segment
+        print(segment)
         self.assertEquals('Hawk Hill', segment.name)
         self.assertAlmostEqual(2.68, float(uh.kilometers(segment.distance)), places=2)
 
@@ -237,17 +255,17 @@ class ClientTest(FunctionalTestBase):
         efforts = self.client.get_segment_efforts(4357415,
                                      start_date_local = "2012-12-23T00:00:00Z",
                                      end_date_local   = "2012-12-23T11:00:00Z",)
-        print efforts
+        print(efforts)
 
         i = 0
         for effort in efforts:
-            print effort
+            print(effort)
             self.assertEqual(4357415, effort.segment.id)
             self.assertIsInstance(effort, model.BaseEffort)
             effort_date = effort.start_date_local
             self.assertEqual(effort_date.strftime("%Y-%m-%d"), "2012-12-23")
             i+=1
-        print i
+        print(i)
 
         self.assertGreater(i, 2)
 
@@ -257,17 +275,17 @@ class ClientTest(FunctionalTestBase):
         efforts = self.client.get_segment_efforts(4357415,
                                         start_date_local = start_date,
                                         end_date_local = end_date,)
-        print efforts
+        print(efforts)
 
         i = 0
         for effort in efforts:
-            print effort
+            print(effort)
             self.assertEqual(4357415, effort.segment.id)
             self.assertIsInstance(effort, model.BaseEffort)
             effort_date = effort.start_date_local
             self.assertEqual(effort_date.strftime("%Y-%m-%d"), "2012-12-31")
             i+=1
-        print i
+        print(i)
 
         self.assertGreater(i, 2)
 
@@ -326,6 +344,8 @@ class AthleteStatsTest(FunctionalTestBase):
         stats = self.client.get_athlete_stats()
         self.assertIsInstance(stats, model.AthleteStats)
         self.assertIsInstance(stats.recent_ride_totals, model.ActivityTotals)
+        print("Biggest climb: {!r}".format(stats.biggest_climb_elevation_gain))
+
         # Check biggest_climb_elevation_gain has been set
         self.assertTrue(uh.meters(stats.biggest_climb_elevation_gain) >= uh.meters(0))
 

@@ -1,3 +1,4 @@
+from __future__ import division, absolute_import, print_function, unicode_literals
 
 
 class AuthError(RuntimeError):
@@ -29,6 +30,15 @@ class Fault(RuntimeError):
 class RateLimitExceeded(RuntimeError):
     """
     Exception raised when the client rate limit has been exceeded.
+
+    http://strava.github.io/api/#access
+    """
+
+
+class RateLimitTimeout(RateLimitExceeded):
+    """
+    Exception raised when the client rate limit has been exceeded
+    and the time to clear the limit (timeout) has not yet been reached
 
     http://strava.github.io/api/#access
     """

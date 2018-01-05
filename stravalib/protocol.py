@@ -3,24 +3,27 @@ Low-level classes for interacting directly with the Strava API webservers.
 """
 from __future__ import division, absolute_import, print_function, unicode_literals
 import abc
-import os.path
 import logging
-import urlparse
+from six.moves.urllib.parse import urlunsplit, urljoin, urlencode
 import functools
-from urllib import urlencode
+
+import six
 
 import requests
 
 from stravalib import exc
 
 
+@six.add_metaclass(abc.ABCMeta)
 class ApiV3(object):
     """
     This class is responsible for performing the HTTP requests, rate limiting, and error handling.
     """
-    __metaclass__ = abc.ABCMeta
 
     server = 'www.strava.com'
+    # Note: The hostname for webhook events is different than normal API requests
+    # (via http://strava.github.io/api/partner/v3/events/)
+    server_webhook_events = 'api.strava.com'
     api_base = '/api/v3'
 
     def __init__(self, access_token=None, requests_session=None, rate_limiter=None):
@@ -29,7 +32,10 @@ class ApiV3(object):
         object.
 
         :param access_token: The token that provides access to a specific Strava account.
+        :type access_token: str
+
         :param requests_session: An existing :class:`requests.Session` object to use.
+        :type requests_session::class:`requests.Session`
         """
         self.log = logging.getLogger('{0.__module__}.{0.__name__}'.format(self.__class__))
         self.access_token = access_token
@@ -85,7 +91,7 @@ class ApiV3(object):
         if state is not None:
             params['state'] = state
 
-        return urlparse.urlunsplit(('https', self.server, '/oauth/authorize', urlencode(params), ''))
+        return urlunsplit(('https', self.server, '/oauth/authorize', urlencode(params), ''))
 
     def exchange_code_for_token(self, client_id, client_secret, code):
         """
@@ -111,14 +117,38 @@ class ApiV3(object):
         self.access_token = token
         return token
 
-    def _resolve_url(self, url):
+    def _resolve_url(self, url, use_webhook_server):
+        server = use_webhook_server and self.server_webhook_events or self.server
         if not url.startswith('http'):
-            url = urlparse.urljoin('https://{0}'.format(self.server), self.api_base + '/' + url.strip('/'))
+            url = urljoin('https://{0}'.format(server), self.api_base + '/' + url.strip('/'))
         return url
 
-    def _request(self, url, params=None, files=None, method='GET', check_for_errors=True):
+    def _request(self, url, params=None, files=None, method='GET', check_for_errors=True, use_webhook_server=False):
+        """
+        Perform the underlying request, returning the parsed JSON results.
 
-        url = self._resolve_url(url)
+        :param url: The request URL.
+        :type url: str
+
+        :param params: Request parameters
+        :type params: Dict[str,Any]
+
+        :param files: Dictionary of file name to file-like objects.
+        :type files: Dict[str,file]
+
+        :param method: The request method (GET/POST/etc.)
+        :type method: str
+
+        :param check_for_errors: Whether to raise
+        :type check_for_errors: bool
+
+        :param use_webhook_server: Whether to use the webhook server for this request.
+        :type use_webhook_server: bool
+
+        :return: The parsed JSON response.
+        :rtype: Dict[str,Any]
+        """
+        url = self._resolve_url(url, use_webhook_server)
         self.log.info("{method} {url!r} with params {params!r}".format(method=method, url=url, params=params))
         if params is None:
             params = {}
@@ -136,23 +166,18 @@ class ApiV3(object):
             raise ValueError("Invalid/unsupported request method specified: {0}".format(method))
 
         raw = requester(url, params=params)
+        # Rate limits are taken from HTTP response headers
+        # https://strava.github.io/api/#rate-limiting
+        self.rate_limiter(raw.headers)
+
         if check_for_errors:
             self._handle_protocol_error(raw)
 
         # 204 = No content
         if raw.status_code in [204]:
-            resp = []
+            resp = {}
         else:
             resp = raw.json()
-
-        # TODO: We should parse the response to get the rate limit details and
-        # update our rate limiter.
-        # see: http://strava.github.io/api/#access
-
-        # At this stage we should assume that request was successful and we should invoke
-        # our rate limiter.  (Note that this may need to be reviewed; some failures may
-        # also count toward the limit?)
-        self.rate_limiter()
 
         return resp
 
@@ -206,29 +231,38 @@ class ApiV3(object):
                 break
         return d.keys()
 
-    def get(self, url, check_for_errors=True, **kwargs):
+    def get(self, url, check_for_errors=True, use_webhook_server=False, **kwargs):
         """
         Performs a generic GET request for specified params, returning the response.
         """
         referenced = self._extract_referenced_vars(url)
         url = url.format(**kwargs)
         params = dict([(k, v) for k, v in kwargs.items() if not k in referenced])
-        return self._request(url, params=params, check_for_errors=check_for_errors)
+        return self._request(url, params=params, check_for_errors=check_for_errors, use_webhook_server=use_webhook_server)
 
-    def post(self, url, files=None, check_for_errors=True, **kwargs):
+    def post(self, url, files=None, check_for_errors=True, use_webhook_server=False, **kwargs):
         """
         Performs a generic POST request for specified params, returning the response.
         """
         referenced = self._extract_referenced_vars(url)
         url = url.format(**kwargs)
         params = dict([(k, v) for k, v in kwargs.items() if not k in referenced])
-        return self._request(url, params=params, files=files, method='POST', check_for_errors=check_for_errors)
+        return self._request(url, params=params, files=files, method='POST', check_for_errors=check_for_errors, use_webhook_server=use_webhook_server)
 
-    def put(self, url, check_for_errors=True, **kwargs):
+    def put(self, url, check_for_errors=True, use_webhook_server=False, **kwargs):
         """
         Performs a generic PUT request for specified params, returning the response.
         """
         referenced = self._extract_referenced_vars(url)
         url = url.format(**kwargs)
         params = dict([(k, v) for k, v in kwargs.items() if not k in referenced])
-        return self._request(url, params=params, method='PUT', check_for_errors=check_for_errors)
+        return self._request(url, params=params, method='PUT', check_for_errors=check_for_errors, use_webhook_server=use_webhook_server)
+
+    def delete(self, url, check_for_errors=True, use_webhook_server=False, **kwargs):
+        """
+        Performs a generic DELETE request for specified params, returning the response.
+        """
+        referenced = self._extract_referenced_vars(url)
+        url = url.format(**kwargs)
+        params = dict([(k, v) for k, v in kwargs.items() if not k in referenced])
+        return self._request(url, params=params, method='DELETE', check_for_errors=check_for_errors, use_webhook_server=use_webhook_server)
